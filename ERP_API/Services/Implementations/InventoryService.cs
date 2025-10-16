@@ -1,96 +1,113 @@
 ﻿using AutoMapper;
-using ERP_API.Data;
 using ERP_API.DTOs;
 using ERP_API.Entities;
 using ERP_API.Repositories.Interfaces;
 using ERP_API.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
-namespace ERP_API.Services.Implementations
+namespace ERP_API.Services.Implementations;
+
+
+public class InventoryService : IInventoryService
 {
-    public class InventoryService : IInventoryService
+    private readonly IUnidadDeTrabajo _unitOfWork;
+    private readonly IMapper _mapper;
+
+    public InventoryService(IUnidadDeTrabajo unitOfWork, IMapper mapper)
     {
-        private readonly IInventoryRepository _repository;
-        private readonly AppDbContext _db;
-        private readonly IMapper _mapper;
+        _unitOfWork = unitOfWork;
+        _mapper = mapper;
+    }
 
-        public InventoryService(IInventoryRepository repository, AppDbContext db, IMapper mapper)
+    public async Task<IEnumerable<InventoryMovementDto>> GetAllAsync()
+    {
+        var movements = await _unitOfWork.Inventory.GetAllAsync();
+        return _mapper.Map<IEnumerable<InventoryMovementDto>>(movements);
+    }
+
+    public async Task<InventoryMovementDto?> GetByIdAsync(Guid id)
+    {
+        var movement = await _unitOfWork.Inventory.GetByIdAsync(id);
+        return movement == null ? null : _mapper.Map<InventoryMovementDto>(movement);
+    }
+
+    
+    public async Task<InventoryMovementDto> CreateAsync(InventoryMovementCreateDto dto)
+    {
+        
+        var product = await _unitOfWork.Products.GetByIdAsync(dto.ProductId);
+        if (product == null)
+            throw new InvalidOperationException($"Producto con ID {dto.ProductId} no encontrado");
+
+       
+        var movement = _mapper.Map<InventoryMovement>(dto);
+
+        
+        if (movement.MovementType == MovementType.Increase)
         {
-            _repository = repository;
-            _db = db;
-            _mapper = mapper;
+            product.Stock += movement.Quantity;
+        }
+        else if (movement.MovementType == MovementType.Decrease)
+        {
+            if (product.Stock < movement.Quantity)
+                throw new InvalidOperationException(
+                    $"Stock insuficiente. Disponible: {product.Stock}, Requerido: {movement.Quantity}");
+
+            product.Stock -= movement.Quantity;
         }
 
-        public async Task<IEnumerable<InventoryMovementDto>> GetAllAsync()
-        {
-            var movements = await _repository.GetAllAsync();
-            return _mapper.Map<IEnumerable<InventoryMovementDto>>(movements);
-        }
+        
+        await _unitOfWork.Inventory.AddAsync(movement);
+        await _unitOfWork.Products.UpdateAsync(product);
 
-        public async Task<InventoryMovementDto?> GetByIdAsync(Guid id)
-        {
-            var movement = await _repository.GetByIdAsync(id);
-            return movement == null ? null : _mapper.Map<InventoryMovementDto>(movement);
-        }
+        
+        await _unitOfWork.SaveChangesAsync();
 
-        public async Task<InventoryMovementDto> CreateAsync(InventoryMovementCreateDto dto)
-        {
-            var movement = _mapper.Map<InventoryMovement>(dto);
+        
+        var createdMovement = await _unitOfWork.Inventory.GetByIdAsync(movement.Id);
+        return _mapper.Map<InventoryMovementDto>(createdMovement!);
+    }
 
-           
-            var product = await _db.Products.FirstOrDefaultAsync(p => p.Id == dto.ProductId);
-            if (product == null)
-                throw new Exception("Producto no encontrado");
+    
+    public async Task<ProductStockDto?> GetStockAsync(Guid productId)
+    {
+        var product = await _unitOfWork.Products.GetByIdAsync(productId);
+        return product == null ? null : new ProductStockDto(product.Id, product.Name, product.Stock);
+    }
 
-            
-            if (movement.MovementType == MovementType.Increase)
-            {
-                product.Stock += movement.Quantity;
-            }
-            else if (movement.MovementType == MovementType.Decrease)
-            {
-                if (product.Stock < movement.Quantity)
-                    throw new Exception("Stock insuficiente");
-                product.Stock -= movement.Quantity;
-            }
+    
+    public async Task<IEnumerable<InventoryMovementDto>> GetFilteredAsync(
+        Guid? productId, DateTime? from, DateTime? to)
+    {
+        
+        var query = _unitOfWork.GetDbContext().InventoryMovements
+            .Include(m => m.Product)
+            .AsNoTracking()
+            .AsQueryable();
 
-            
-            await _repository.AddAsync(movement);
-            await _repository.SaveChangesAsync();
+        if (productId.HasValue)
+            query = query.Where(m => m.ProductId == productId.Value);
 
-            return _mapper.Map<InventoryMovementDto>(movement);
-        }
+        if (from.HasValue)
+            query = query.Where(m => m.CreatedAt >= from.Value);
 
-        public async Task<ProductStockDto?> GetStockAsync(Guid productId)
-        {
-            var p = await _db.Products.FirstOrDefaultAsync(p => p.Id == productId);
-            return p == null ? null : new ProductStockDto(p.Id, p.Name, p.Stock);
-        }
+        if (to.HasValue)
+            query = query.Where(m => m.CreatedAt <= to.Value);
 
-        public async Task<IEnumerable<InventoryMovementDto>> GetFilteredAsync(Guid? productId, DateTime? from, DateTime? to)
-        {
-            var query = _db.InventoryMovements.Include(m => m.Product).AsQueryable();
+        var movements = await query.ToListAsync();
+        return _mapper.Map<IEnumerable<InventoryMovementDto>>(movements);
+    }
 
-            if (productId.HasValue)
-                query = query.Where(m => m.ProductId == productId.Value);
+   
+    public async Task<IEnumerable<ProductStockDto>> GetLowStockAsync(int threshold)
+    {
+       
+        var products = await _unitOfWork.GetDbContext().Products
+            .AsNoTracking()
+            .Where(p => p.Stock < threshold)
+            .OrderBy(p => p.Stock) 
+            .ToListAsync();
 
-            if (from.HasValue)
-                query = query.Where(m => m.CreatedAt >= from.Value);
-
-            if (to.HasValue)
-                query = query.Where(m => m.CreatedAt <= to.Value);
-
-            var movements = await query.ToListAsync();
-            return _mapper.Map<IEnumerable<InventoryMovementDto>>(movements);
-        }
-
-        public async Task<IEnumerable<ProductStockDto>> GetLowStockAsync(int threshold)
-        {
-            var products = await _db.Products
-                .Where(p => p.Stock < threshold)
-                .ToListAsync();
-
-            return products.Select(p => new ProductStockDto(p.Id, p.Name, p.Stock));
-        }
+        return products.Select(p => new ProductStockDto(p.Id, p.Name, p.Stock));
     }
 }

@@ -1,7 +1,7 @@
 ﻿using System.Text;
 using ERP_API.Common.Filters;
+using ERP_API.Common.Seed;
 using ERP_API.Data;
-using ERP_API.Entities;
 using ERP_API.Repositories.Implementations;
 using ERP_API.Repositories.Interfaces;
 using ERP_API.Services.Implementations;
@@ -15,29 +15,31 @@ using FluentValidation.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+
 builder.Services.AddControllers(opts =>
 {
     opts.Filters.Add<GlobalExceptionFilter>();
 });
 
+
 var conn = builder.Configuration.GetConnectionString("SqlServer");
 builder.Services.AddDbContext<AppDbContext>(opt => opt.UseSqlServer(conn));
 
-builder.Services.AddScoped<IProductRepository, ProductRepository>();
+
+builder.Services.AddScoped<IUnidadDeTrabajo, UnidadDeTrabajo>();
+
+
 builder.Services.AddScoped<IProductService, ProductService>();
-builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<ICustomerService, CustomerService>();
-builder.Services.AddScoped<IOrderRepository, OrderRepository>();
 builder.Services.AddScoped<IOrderService, OrderService>();
-
-
-builder.Services.AddScoped<IInventoryRepository, InventoryRepository>();
 builder.Services.AddScoped<IInventoryService, InventoryService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
+
 
 builder.Services.AddAutoMapper(typeof(Program).Assembly);
 builder.Services.AddFluentValidationAutoValidation();
 builder.Services.AddValidatorsFromAssemblyContaining<ERP_API.Validators.CustomerCreateValidator>();
+
 
 var jwt = builder.Configuration.GetSection("Jwt");
 var key = Encoding.UTF8.GetBytes(jwt["Secret"]!);
@@ -58,6 +60,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -73,10 +76,20 @@ builder.Services.AddSwaggerGen(c =>
     });
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
-        { new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" } },
-          Array.Empty<string>() }
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
     });
 });
+
 
 builder.Services.AddCors(options =>
 {
@@ -87,34 +100,25 @@ builder.Services.AddCors(options =>
         .AllowCredentials());
 });
 
+
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AppDbContext>("db");
 
+
 var app = builder.Build();
+
 
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+   
     await db.Database.MigrateAsync();
 
-    if (!await db.Roles.AnyAsync())
-    {
-        var admin = new Role { Name = "Admin" };
-        var user = new Role { Name = "User" };
-        db.Roles.AddRange(admin, user);
-
-        var u = new User
-        {
-            Email = "admin@demo.test",
-            FullName = "Admin",
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword("Admin123!")
-        };
-        db.Users.Add(u);
-        db.UserRoles.Add(new UserRole { User = u, Role = admin });
-
-        await db.SaveChangesAsync();
-    }
+    
+    await DatabaseSeeder.SeedAsync(db);
 }
+
 
 if (app.Environment.IsDevelopment())
 {
@@ -123,7 +127,6 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("DevCors");
-
 app.UseAuthentication();
 app.UseAuthorization();
 

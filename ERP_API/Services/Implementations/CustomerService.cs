@@ -6,54 +6,79 @@ using ERP_API.Services.Interfaces;
 
 namespace ERP_API.Services.Implementations;
 
+
 public class CustomerService : ICustomerService
 {
-    private readonly ICustomerRepository _repo;
+    private readonly IUnidadDeTrabajo _unitOfWork;
     private readonly IMapper _mapper;
-    public CustomerService(ICustomerRepository repo, IMapper mapper)
+
+    public CustomerService(IUnidadDeTrabajo unitOfWork, IMapper mapper)
     {
-        _repo = repo; _mapper = mapper;
+        _unitOfWork = unitOfWork;
+        _mapper = mapper;
     }
 
     public async Task<object> GetPagedAsync(int page, int pageSize, string? q, string? sort)
     {
-        var (items, total) = await _repo.GetPagedAsync(page, pageSize, q, sort);
+        var (items, total) = await _unitOfWork.Customers.GetPagedAsync(page, pageSize, q, sort);
         var result = _mapper.Map<List<CustomerDto>>(items);
         return new { total, page, pageSize, items = result };
     }
 
     public async Task<CustomerDto?> GetAsync(Guid id)
     {
-        var c = await _repo.GetByIdAsync(id);
-        return c is null ? null : _mapper.Map<CustomerDto>(c);
+        var customer = await _unitOfWork.Customers.GetByIdAsync(id);
+        return customer is null ? null : _mapper.Map<CustomerDto>(customer);
     }
 
     public async Task<(bool ok, string? error, CustomerDto? dto)> CreateAsync(CustomerCreateDto dto)
     {
-        if (await _repo.ExistsByEmailAsync(dto.Email)) return (false, "Email already exists", null);
-        var c = _mapper.Map<Customer>(dto);
-        await _repo.AddAsync(c);
-        await _repo.SaveAsync();
-        return (true, null, _mapper.Map<CustomerDto>(c));
+        
+        if (await _unitOfWork.Customers.ExistsByEmailAsync(dto.Email))
+            return (false, "Email already exists", null);
+
+       
+        var customer = _mapper.Map<Customer>(dto);
+        await _unitOfWork.Customers.AddAsync(customer);
+
+        
+        await _unitOfWork.SaveChangesAsync();
+
+        return (true, null, _mapper.Map<CustomerDto>(customer));
     }
 
     public async Task<(bool ok, string? error, CustomerDto? dto)> UpdateAsync(Guid id, CustomerUpdateDto dto)
     {
-        var c = await _repo.GetByIdAsync(id);
-        if (c is null) return (false, "NotFound", null);
-        if (await _repo.ExistsByEmailAsync(dto.Email, id)) return (false, "Email already exists", null);
-        _mapper.Map(dto, c);
-        await _repo.UpdateAsync(c);
-        await _repo.SaveAsync();
-        return (true, null, _mapper.Map<CustomerDto>(c));
+        
+        var customer = await _unitOfWork.Customers.GetByIdAsync(id);
+        if (customer is null)
+            return (false, "NotFound", null);
+
+       
+        if (await _unitOfWork.Customers.ExistsByEmailAsync(dto.Email, id))
+            return (false, "Email already exists", null);
+
+        
+        _mapper.Map(dto, customer);
+        await _unitOfWork.Customers.UpdateAsync(customer);
+
+       
+        await _unitOfWork.SaveChangesAsync();
+
+        return (true, null, _mapper.Map<CustomerDto>(customer));
     }
 
     public async Task<bool> DeleteAsync(Guid id)
     {
-        var c = await _repo.GetByIdAsync(id);
-        if (c is null) return false;
-        await _repo.DeleteAsync(c);
-        await _repo.SaveAsync();
+        var customer = await _unitOfWork.Customers.GetByIdAsync(id);
+        if (customer is null)
+            return false;
+
+        await _unitOfWork.Customers.DeleteAsync(customer);
+
+        
+        await _unitOfWork.SaveChangesAsync();
+
         return true;
     }
 }

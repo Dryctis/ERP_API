@@ -7,6 +7,6 @@ namespace ERP_API.Repositories.Interfaces
         Task<IEnumerable<InventoryMovement>> GetAllAsync();
         Task<InventoryMovement?> GetByIdAsync(Guid id);
         Task AddAsync(InventoryMovement movement);
-        Task SaveChangesAsync();
+        //Task SaveChangesAsync();
     }
 }
