@@ -1,3 +1,4 @@
+using ERP_API.Common.Entities;
 using ERP_API.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,7 +18,6 @@ public class AppDbContext : DbContext
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
 
-
     protected override void ConfigureConventions(ModelConfigurationBuilder b)
     {
         b.Properties<decimal>().HavePrecision(18, 2);
@@ -25,6 +25,7 @@ public class AppDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        
         b.Entity<Order>(e =>
         {
             e.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId);
@@ -43,21 +44,65 @@ public class AppDbContext : DbContext
 
         b.Entity<UserRole>().HasKey(x => new { x.UserId, x.RoleId });
 
-        b.Entity<User>()
-            .HasIndex(x => x.Email)
-            .IsUnique();
+        b.Entity<User>().HasIndex(x => x.Email).IsUnique();
+        b.Entity<Role>().HasIndex(x => x.Name).IsUnique();
+        b.Entity<RefreshToken>().HasIndex(x => x.Token).IsUnique();
+        b.Entity<Customer>(e => { e.HasIndex(x => x.Email).IsUnique(); });
 
-        b.Entity<Role>()
-            .HasIndex(x => x.Name)
-            .IsUnique();
+       
+        ConfigureSoftDeleteFilters(b);
+    }
 
-        b.Entity<RefreshToken>()
-            .HasIndex(x => x.Token)
-            .IsUnique();
-
-        b.Entity<Customer>(e =>
+    
+    private void ConfigureSoftDeleteFilters(ModelBuilder modelBuilder)
+    {
+        
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
-            e.HasIndex(x => x.Email).IsUnique();
-        });
+            if (typeof(ISoftDeletable).IsAssignableFrom(entityType.ClrType))
+            {
+               
+                var parameter = System.Linq.Expressions.Expression.Parameter(entityType.ClrType, "e");
+                var property = System.Linq.Expressions.Expression.Property(parameter, nameof(ISoftDeletable.IsDeleted));
+                var filter = System.Linq.Expressions.Expression.Lambda(
+                    System.Linq.Expressions.Expression.Not(property),
+                    parameter
+                );
+
+                modelBuilder.Entity(entityType.ClrType).HasQueryFilter(filter);
+            }
+        }
+    }
+
+    
+    public override int SaveChanges()
+    {
+        HandleSoftDelete();
+        return base.SaveChanges();
+    }
+
+    
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        HandleSoftDelete();
+        return base.SaveChangesAsync(cancellationToken);
+    }
+
+   
+    private void HandleSoftDelete()
+    {
+        var entries = ChangeTracker.Entries()
+            .Where(e => e.State == EntityState.Deleted && e.Entity is ISoftDeletable);
+
+        foreach (var entry in entries)
+        {
+            
+            entry.State = EntityState.Modified;
+
+            var entity = (ISoftDeletable)entry.Entity;
+            entity.IsDeleted = true;
+            entity.DeletedAt = DateTime.UtcNow;
+            
+        }
     }
 }

@@ -1,12 +1,13 @@
-﻿using ERP_API.DTOs;
+﻿using ERP_API.Common.Results;
+using ERP_API.DTOs;
 
 namespace ERP_API.Services.Interfaces;
 
 public interface ICustomerService
 {
     Task<object> GetPagedAsync(int page, int pageSize, string? q, string? sort);
-    Task<CustomerDto?> GetAsync(Guid id);
-    Task<(bool ok, string? error, CustomerDto? dto)> CreateAsync(CustomerCreateDto dto);
-    Task<(bool ok, string? error, CustomerDto? dto)> UpdateAsync(Guid id, CustomerUpdateDto dto);
-    Task<bool> DeleteAsync(Guid id);
+    Task<Result<CustomerDto>> GetAsync(Guid id);
+    Task<Result<CustomerDto>> CreateAsync(CustomerCreateDto dto);
+    Task<Result<CustomerDto>> UpdateAsync(Guid id, CustomerUpdateDto dto);
+    Task<Result> DeleteAsync(Guid id);
 }

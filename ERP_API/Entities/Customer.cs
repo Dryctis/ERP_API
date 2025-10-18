@@ -1,8 +1,9 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using ERP_API.Common.Entities;
 
 namespace ERP_API.Entities;
 
-public class Customer
+public class Customer : ISoftDeletable
 {
     public Guid Id { get; set; } = Guid.NewGuid();
 
@@ -16,4 +17,13 @@ public class Customer
     public string? Phone { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    
+    public bool IsDeleted { get; set; }
+
+    
+    public DateTime? DeletedAt { get; set; }
+
+    
+    public Guid? DeletedBy { get; set; }
 }

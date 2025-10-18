@@ -1,6 +1,8 @@
-﻿namespace ERP_API.Entities;
+﻿using ERP_API.Common.Entities;
 
-public class Order
+namespace ERP_API.Entities;
+
+public class Order : ISoftDeletable
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid CustomerId { get; set; }
@@ -10,4 +12,12 @@ public class Order
     public decimal Total { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
+
+    
+    public bool IsDeleted { get; set; }
+
+    public DateTime? DeletedAt { get; set; }
+
+    
+    public Guid? DeletedBy { get; set; }
 }
