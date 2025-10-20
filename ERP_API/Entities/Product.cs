@@ -23,4 +23,6 @@ public class Product : ISoftDeletable
 
     
     public Guid? DeletedBy { get; set; }
+
+    public ICollection<ProductSupplier> ProductSuppliers { get; set; } = new List<ProductSupplier>();
 }

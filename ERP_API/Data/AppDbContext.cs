@@ -8,6 +8,7 @@ public class AppDbContext : DbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
+   
     public DbSet<Product> Products => Set<Product>();
     public DbSet<User> Users => Set<User>();
     public DbSet<Role> Roles => Set<Role>();
@@ -17,6 +18,13 @@ public class AppDbContext : DbContext
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
+    public DbSet<Supplier> Suppliers => Set<Supplier>();
+    public DbSet<ProductSupplier> ProductSuppliers => Set<ProductSupplier>();
+
+    
+    public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<InvoiceItem> InvoiceItems => Set<InvoiceItem>();
+    public DbSet<InvoicePayment> InvoicePayments => Set<InvoicePayment>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder b)
     {
@@ -49,19 +57,16 @@ public class AppDbContext : DbContext
         b.Entity<RefreshToken>().HasIndex(x => x.Token).IsUnique();
         b.Entity<Customer>(e => { e.HasIndex(x => x.Email).IsUnique(); });
 
-       
+      
         ConfigureSoftDeleteFilters(b);
     }
 
-    
     private void ConfigureSoftDeleteFilters(ModelBuilder modelBuilder)
     {
-        
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
             if (typeof(ISoftDeletable).IsAssignableFrom(entityType.ClrType))
             {
-               
                 var parameter = System.Linq.Expressions.Expression.Parameter(entityType.ClrType, "e");
                 var property = System.Linq.Expressions.Expression.Property(parameter, nameof(ISoftDeletable.IsDeleted));
                 var filter = System.Linq.Expressions.Expression.Lambda(
@@ -74,21 +79,18 @@ public class AppDbContext : DbContext
         }
     }
 
-    
     public override int SaveChanges()
     {
         HandleSoftDelete();
         return base.SaveChanges();
     }
 
-    
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         HandleSoftDelete();
         return base.SaveChangesAsync(cancellationToken);
     }
 
-   
     private void HandleSoftDelete()
     {
         var entries = ChangeTracker.Entries()
@@ -96,13 +98,11 @@ public class AppDbContext : DbContext
 
         foreach (var entry in entries)
         {
-            
             entry.State = EntityState.Modified;
 
             var entity = (ISoftDeletable)entry.Entity;
             entity.IsDeleted = true;
             entity.DeletedAt = DateTime.UtcNow;
-            
         }
     }
 }

@@ -15,7 +15,7 @@ public class User
 public class Role
 {
     public Guid Id { get; set; } = Guid.NewGuid();
-    public string Name { get; set; } = default!; // "Admin", "User"
+    public string Name { get; set; } = default!; 
     public ICollection<UserRole> UserRoles { get; set; } = new List<UserRole>();
 }
 
@@ -36,5 +36,5 @@ public class RefreshToken
     public DateTime ExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public bool Revoked { get; set; }
-    public string? ReplacedByToken { get; set; } // rotación
+    public string? ReplacedByToken { get; set; }
 }

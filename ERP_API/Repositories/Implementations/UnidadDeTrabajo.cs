@@ -4,7 +4,6 @@ using Microsoft.EntityFrameworkCore.Storage;
 
 namespace ERP_API.Repositories.Implementations;
 
-
 public class UnidadDeTrabajo : IUnidadDeTrabajo
 {
     private readonly AppDbContext _context;
@@ -15,13 +14,17 @@ public class UnidadDeTrabajo : IUnidadDeTrabajo
     private ICustomerRepository? _customers;
     private IOrderRepository? _orders;
     private IInventoryRepository? _inventory;
+    private ISupplierRepository? _suppliers;
+    private IProductSupplierRepository? _productSuppliers;
+    private IInvoiceRepository? _invoices;
+    private IInvoicePaymentRepository? _invoicePayments;
 
     public UnidadDeTrabajo(AppDbContext context)
     {
         _context = context;
     }
 
-    
+ 
     public IProductRepository Products =>
         _products ??= new ProductRepository(_context);
 
@@ -34,13 +37,24 @@ public class UnidadDeTrabajo : IUnidadDeTrabajo
     public IInventoryRepository Inventory =>
         _inventory ??= new InventoryRepository(_context);
 
+    public ISupplierRepository Suppliers =>
+        _suppliers ??= new SupplierRepository(_context);
+
+    public IProductSupplierRepository ProductSuppliers =>
+        _productSuppliers ??= new ProductSupplierRepository(_context);
+
+    public IInvoiceRepository Invoices =>
+        _invoices ??= new InvoiceRepository(_context);
+
+    public IInvoicePaymentRepository InvoicePayments =>
+        _invoicePayments ??= new InvoicePaymentRepository(_context);
+
     
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         return await _context.SaveChangesAsync(cancellationToken);
     }
 
-    
     public async Task BeginTransactionAsync()
     {
         if (_transaction != null)
@@ -51,7 +65,6 @@ public class UnidadDeTrabajo : IUnidadDeTrabajo
         _transaction = await _context.Database.BeginTransactionAsync();
     }
 
-    
     public async Task CommitTransactionAsync()
     {
         try
@@ -78,7 +91,6 @@ public class UnidadDeTrabajo : IUnidadDeTrabajo
         }
     }
 
-    
     public async Task RollbackTransactionAsync()
     {
         if (_transaction != null)
@@ -89,13 +101,10 @@ public class UnidadDeTrabajo : IUnidadDeTrabajo
         }
     }
 
-    
     public AppDbContext GetDbContext() => _context;
 
-    
     public void Dispose()
     {
         _transaction?.Dispose();
-        
     }
 }
