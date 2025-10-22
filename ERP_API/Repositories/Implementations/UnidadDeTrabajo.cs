@@ -18,6 +18,7 @@ public class UnidadDeTrabajo : IUnidadDeTrabajo
     private IProductSupplierRepository? _productSuppliers;
     private IInvoiceRepository? _invoices;
     private IInvoicePaymentRepository? _invoicePayments;
+    private IPurchaseOrderRepository? _purchaseOrders;
 
     public UnidadDeTrabajo(AppDbContext context)
     {
@@ -49,7 +50,10 @@ public class UnidadDeTrabajo : IUnidadDeTrabajo
     public IInvoicePaymentRepository InvoicePayments =>
         _invoicePayments ??= new InvoicePaymentRepository(_context);
 
-    
+    public IPurchaseOrderRepository PurchaseOrders =>
+       _purchaseOrders ??= new PurchaseOrderRepository(_context);
+
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         return await _context.SaveChangesAsync(cancellationToken);
