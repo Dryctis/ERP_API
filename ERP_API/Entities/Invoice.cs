@@ -3,8 +3,6 @@ using System.ComponentModel.DataAnnotations;
 
 namespace ERP_API.Entities;
 
-
-
 public enum InvoiceStatus
 {
     Draft = 1,
@@ -21,7 +19,6 @@ public enum PaymentMethod
     Check = 4,
     Other = 5
 }
-
 
 public class Invoice : ISoftDeletable
 {
@@ -60,12 +57,13 @@ public class Invoice : ISoftDeletable
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
- 
+    [Timestamp]
+    public byte[]? RowVersion { get; set; }
+
     public bool IsDeleted { get; set; }
     public DateTime? DeletedAt { get; set; }
     public Guid? DeletedBy { get; set; }
 
- 
     public ICollection<InvoiceItem> Items { get; set; } = new List<InvoiceItem>();
     public ICollection<InvoicePayment> Payments { get; set; } = new List<InvoicePayment>();
 
@@ -84,8 +82,6 @@ public class Invoice : ISoftDeletable
             Status = InvoiceStatus.Sent;
     }
 }
-
-
 
 public class InvoiceItem
 {
@@ -111,8 +107,6 @@ public class InvoiceItem
 
     public int SortOrder { get; set; }
 }
-
-
 
 public class InvoicePayment
 {

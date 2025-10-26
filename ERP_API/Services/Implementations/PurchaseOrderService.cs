@@ -6,7 +6,6 @@ using ERP_API.Repositories.Interfaces;
 using ERP_API.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
-
 namespace ERP_API.Services.Implementations;
 
 public class PurchaseOrderService : IPurchaseOrderService
@@ -14,17 +13,19 @@ public class PurchaseOrderService : IPurchaseOrderService
     private readonly IUnidadDeTrabajo _unitOfWork;
     private readonly IMapper _mapper;
     private readonly ILogger<PurchaseOrderService> _logger;
+    private readonly ITaxCalculator _taxCalculator;
 
     public PurchaseOrderService(
         IUnidadDeTrabajo unitOfWork,
         IMapper mapper,
-        ILogger<PurchaseOrderService> logger)
+        ILogger<PurchaseOrderService> logger,
+        ITaxCalculator taxCalculator)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _logger = logger;
+        _taxCalculator = taxCalculator;
     }
-
 
     public async Task<object> GetPagedAsync(
         int page,
@@ -202,7 +203,6 @@ public class PurchaseOrderService : IPurchaseOrderService
         return Result<List<ReorderSuggestionDto>>.Success(suggestions);
     }
 
-
     public async Task<Result<PurchaseOrderDto>> CreateAsync(PurchaseOrderCreateDto dto)
     {
         _logger.LogInformation(
@@ -353,7 +353,6 @@ public class PurchaseOrderService : IPurchaseOrderService
         return Result.Success();
     }
 
-
     public async Task<Result<PurchaseOrderDto>> SendOrderAsync(Guid id)
     {
         _logger.LogInformation("Enviando orden de compra. PurchaseOrderId: {Id}", id);
@@ -466,55 +465,12 @@ public class PurchaseOrderService : IPurchaseOrderService
 
         try
         {
-            foreach (var receiveDto in dto.Items)
+            var validationResult = await ValidateAndProcessReceivedItems(purchaseOrder, dto);
+
+            if (validationResult.IsFailure)
             {
-                var item = purchaseOrder.Items.FirstOrDefault(i => i.Id == receiveDto.PurchaseOrderItemId);
-
-                if (item is null)
-                {
-                    await _unitOfWork.RollbackTransactionAsync();
-                    _logger.LogWarning(
-                        "Item no encontrado. ItemId: {ItemId}, PurchaseOrderId: {Id}",
-                        receiveDto.PurchaseOrderItemId, id
-                    );
-                    return Result<PurchaseOrderDto>.Failure($"Item {receiveDto.PurchaseOrderItemId} not found");
-                }
-
-                var newReceivedQuantity = item.ReceivedQuantity + receiveDto.ReceivedQuantity;
-                if (newReceivedQuantity > item.OrderedQuantity)
-                {
-                    await _unitOfWork.RollbackTransactionAsync();
-                    _logger.LogWarning(
-                        "Cantidad recibida excede ordenada. ItemId: {ItemId}, Ordered: {Ordered}, Receiving: {Receiving}",
-                        item.Id, item.OrderedQuantity, newReceivedQuantity
-                    );
-                    return Result<PurchaseOrderDto>.Failure(
-                        $"Cannot receive {receiveDto.ReceivedQuantity} units. Only {item.PendingQuantity} pending");
-                }
-
-                item.ReceivedQuantity = newReceivedQuantity;
-
-                var product = await _unitOfWork.Products.GetByIdAsync(item.ProductId);
-                if (product is not null)
-                {
-                    var previousStock = product.Stock;
-                    product.Stock += receiveDto.ReceivedQuantity;
-
-                    await _unitOfWork.Products.UpdateAsync(product);
-
-                    await _unitOfWork.Inventory.AddAsync(new InventoryMovement
-                    {
-                        ProductId = product.Id,
-                        Quantity = receiveDto.ReceivedQuantity,
-                        MovementType = MovementType.Increase,
-                        Reason = $"Purchase Order {purchaseOrder.OrderNumber} - Item received"
-                    });
-
-                    _logger.LogInformation(
-                        "Stock actualizado. ProductId: {ProductId}, Previous: {Previous}, Added: {Added}, New: {New}",
-                        product.Id, previousStock, receiveDto.ReceivedQuantity, product.Stock
-                    );
-                }
+                await _unitOfWork.RollbackTransactionAsync();
+                return validationResult;
             }
 
             purchaseOrder.UpdateStatusBasedOnReceipts();
@@ -576,28 +532,7 @@ public class PurchaseOrderService : IPurchaseOrderService
 
             try
             {
-                foreach (var item in purchaseOrder.Items.Where(i => i.ReceivedQuantity > 0))
-                {
-                    var product = await _unitOfWork.Products.GetByIdAsync(item.ProductId);
-                    if (product is not null)
-                    {
-                        product.Stock -= item.ReceivedQuantity;
-                        await _unitOfWork.Products.UpdateAsync(product);
-
-                        await _unitOfWork.Inventory.AddAsync(new InventoryMovement
-                        {
-                            ProductId = product.Id,
-                            Quantity = item.ReceivedQuantity,
-                            MovementType = MovementType.Decrease,
-                            Reason = $"Purchase Order {purchaseOrder.OrderNumber} - Cancelled (reversal)"
-                        });
-
-                        _logger.LogWarning(
-                            "Stock revertido por cancelación. ProductId: {ProductId}, Quantity: {Quantity}",
-                            product.Id, item.ReceivedQuantity
-                        );
-                    }
-                }
+                await RevertReceivedItems(purchaseOrder);
 
                 purchaseOrder.Status = PurchaseOrderStatus.Cancelled;
 
@@ -665,7 +600,7 @@ public class PurchaseOrderService : IPurchaseOrderService
             var unitCost = itemDto.UnitCost ?? GetSupplierCostForProduct(product, purchaseOrder.SupplierId);
 
             var lineSubtotal = (itemDto.OrderedQuantity * unitCost) - itemDto.DiscountAmount;
-            var lineTax = lineSubtotal * 0.12m;
+            var lineTax = _taxCalculator.CalculateTax(lineSubtotal, TaxType.IVA);
             var lineTotal = lineSubtotal + lineTax;
 
             var item = new PurchaseOrderItem
@@ -704,6 +639,88 @@ public class PurchaseOrderService : IPurchaseOrderService
                               - purchaseOrder.DiscountAmount;
     }
 
+    private async Task<Result<PurchaseOrderDto>> ValidateAndProcessReceivedItems(
+        PurchaseOrder purchaseOrder,
+        ReceiveItemsDto dto)
+    {
+        foreach (var receiveDto in dto.Items)
+        {
+            var item = purchaseOrder.Items.FirstOrDefault(i => i.Id == receiveDto.PurchaseOrderItemId);
+
+            if (item is null)
+            {
+                _logger.LogWarning(
+                    "Item no encontrado. ItemId: {ItemId}, PurchaseOrderId: {Id}",
+                    receiveDto.PurchaseOrderItemId, purchaseOrder.Id
+                );
+                return Result<PurchaseOrderDto>.Failure($"Item {receiveDto.PurchaseOrderItemId} not found");
+            }
+
+            var newReceivedQuantity = item.ReceivedQuantity + receiveDto.ReceivedQuantity;
+            if (newReceivedQuantity > item.OrderedQuantity)
+            {
+                _logger.LogWarning(
+                    "Cantidad recibida excede ordenada. ItemId: {ItemId}, Ordered: {Ordered}, Receiving: {Receiving}",
+                    item.Id, item.OrderedQuantity, newReceivedQuantity
+                );
+                return Result<PurchaseOrderDto>.Failure(
+                    $"Cannot receive {receiveDto.ReceivedQuantity} units. Only {item.PendingQuantity} pending");
+            }
+
+            item.ReceivedQuantity = newReceivedQuantity;
+
+            var product = await _unitOfWork.Products.GetByIdAsync(item.ProductId);
+            if (product is not null)
+            {
+                var previousStock = product.Stock;
+                product.Stock += receiveDto.ReceivedQuantity;
+
+                await _unitOfWork.Products.UpdateAsync(product);
+
+                await _unitOfWork.Inventory.AddAsync(new InventoryMovement
+                {
+                    ProductId = product.Id,
+                    Quantity = receiveDto.ReceivedQuantity,
+                    MovementType = MovementType.Increase,
+                    Reason = $"Purchase Order {purchaseOrder.OrderNumber} - Item received"
+                });
+
+                _logger.LogInformation(
+                    "Stock actualizado. ProductId: {ProductId}, Previous: {Previous}, Added: {Added}, New: {New}",
+                    product.Id, previousStock, receiveDto.ReceivedQuantity, product.Stock
+                );
+            }
+        }
+
+        return Result<PurchaseOrderDto>.Success(null!);
+    }
+
+    private async Task RevertReceivedItems(PurchaseOrder purchaseOrder)
+    {
+        foreach (var item in purchaseOrder.Items.Where(i => i.ReceivedQuantity > 0))
+        {
+            var product = await _unitOfWork.Products.GetByIdAsync(item.ProductId);
+            if (product is not null)
+            {
+                product.Stock -= item.ReceivedQuantity;
+                await _unitOfWork.Products.UpdateAsync(product);
+
+                await _unitOfWork.Inventory.AddAsync(new InventoryMovement
+                {
+                    ProductId = product.Id,
+                    Quantity = item.ReceivedQuantity,
+                    MovementType = MovementType.Decrease,
+                    Reason = $"Purchase Order {purchaseOrder.OrderNumber} - Cancelled (reversal)"
+                });
+
+                _logger.LogWarning(
+                    "Stock revertido por cancelación. ProductId: {ProductId}, Quantity: {Quantity}",
+                    product.Id, item.ReceivedQuantity
+                );
+            }
+        }
+    }
+
     private PurchaseOrderDto MapToPurchaseOrderDto(PurchaseOrder po)
     {
         return new PurchaseOrderDto(
@@ -729,27 +746,27 @@ public class PurchaseOrderService : IPurchaseOrderService
             CreatedAt: po.CreatedAt,
             UpdatedAt: po.UpdatedAt,
             Items: po.Items.Select(item => new PurchaseOrderItemDto(
-                Id: item.Id,
-                ProductId: item.ProductId,
-                ProductName: item.Product?.Name ?? "N/A",
-                ProductSku: item.Product?.Sku ?? "N/A",
-                Description: item.Description,
-                SupplierSku: item.SupplierSku,
-                OrderedQuantity: item.OrderedQuantity,
-                ReceivedQuantity: item.ReceivedQuantity,
-                PendingQuantity: item.PendingQuantity,
-                UnitCost: item.UnitCost,
-                DiscountAmount: item.DiscountAmount,
-                Subtotal: item.Subtotal,
-                TaxAmount: item.TaxAmount,
-                LineTotal: item.LineTotal,
-                ReceivedPercentage: item.GetReceivedPercentage()
+            Id: item.Id,
+            ProductId: item.ProductId,
+            ProductName: item.Product?.Name ?? "N/A",
+            ProductSku: item.Product?.Sku ?? "N/A",
+            Description: item.Description,
+            SupplierSku: item.SupplierSku,
+            OrderedQuantity: item.OrderedQuantity,
+            ReceivedQuantity: item.ReceivedQuantity,
+            PendingQuantity: item.PendingQuantity,
+            UnitCost: item.UnitCost,
+            DiscountAmount: item.DiscountAmount,
+            Subtotal: item.Subtotal,
+            TaxAmount: item.TaxAmount,
+            LineTotal: item.LineTotal,
+            ReceivedPercentage: item.GetReceivedPercentage()
             )).OrderBy(i => i.Id).ToList(),
             CanBeEdited: po.CanBeEdited(),
             CanBeSent: po.CanBeSent(),
             CanBeCancelled: po.CanBeCancelled(),
             CanReceiveItems: po.CanReceiveItems(),
             IsFullyReceived: po.IsFullyReceived()
-        );
-    }
+            );
+      }
 }

@@ -9,18 +9,23 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ERP_API.Services.Implementations;
 
-
 public class OrderService : IOrderService
 {
     private readonly IUnidadDeTrabajo _unitOfWork;
     private readonly IMapper _mapper;
     private readonly ILogger<OrderService> _logger;
+    private readonly ITaxCalculator _taxCalculator; 
 
-    public OrderService(IUnidadDeTrabajo unitOfWork, IMapper mapper, ILogger<OrderService> logger)
+    public OrderService(
+        IUnidadDeTrabajo unitOfWork,
+        IMapper mapper,
+        ILogger<OrderService> logger,
+        ITaxCalculator taxCalculator) 
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _logger = logger;
+        _taxCalculator = taxCalculator; 
     }
 
     public async Task<Result<OrderDto>> GetAsync(Guid id)
@@ -40,7 +45,6 @@ public class OrderService : IOrderService
             dto.CustomerId, dto.Items?.Count ?? 0
         );
 
-       
         var customer = await _unitOfWork.Customers.GetByIdAsync(dto.CustomerId);
         if (customer is null)
         {
@@ -48,14 +52,12 @@ public class OrderService : IOrderService
             return Result<OrderDto>.Failure("Customer not found");
         }
 
-        
         if (dto.Items is null || dto.Items.Count == 0)
         {
             _logger.LogWarning("Orden sin items. CustomerId: {CustomerId}", dto.CustomerId);
             return Result<OrderDto>.Failure("Order must have at least one item");
         }
 
-        
         var productIds = dto.Items.Select(i => i.ProductId).Distinct().ToList();
         var products = await GetProductsDictionaryAsync(productIds);
 
@@ -68,7 +70,6 @@ public class OrderService : IOrderService
             return Result<OrderDto>.Failure("One or more products not found");
         }
 
-        
         foreach (var item in dto.Items)
         {
             var product = products[item.ProductId];
@@ -82,7 +83,6 @@ public class OrderService : IOrderService
             }
         }
 
-      
         var order = BuildOrder(dto, products);
 
         _logger.LogInformation(
@@ -90,12 +90,10 @@ public class OrderService : IOrderService
             dto.CustomerId, order.Subtotal, order.Total, order.Items.Count
         );
 
-        
         await _unitOfWork.BeginTransactionAsync();
 
         try
         {
-            
             foreach (var item in dto.Items)
             {
                 var product = products[item.ProductId];
@@ -175,10 +173,15 @@ public class OrderService : IOrderService
             });
         }
 
-        const decimal taxRate = 0.12m;
+       
         order.Subtotal = subtotal;
-        order.Tax = Math.Round(order.Subtotal * taxRate, 2, MidpointRounding.AwayFromZero);
+        order.Tax = _taxCalculator.CalculateTax(order.Subtotal, TaxType.IVA);
         order.Total = order.Subtotal + order.Tax;
+
+        _logger.LogDebug(
+            "Impuestos calculados. Subtotal: {Subtotal}, IVA: {Tax}, Total: {Total}",
+            order.Subtotal, order.Tax, order.Total
+        );
 
         return order;
     }

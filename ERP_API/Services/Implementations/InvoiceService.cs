@@ -6,6 +6,7 @@ using ERP_API.Repositories.Interfaces;
 using ERP_API.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
+
 namespace ERP_API.Services.Implementations;
 
 public class InvoiceService : IInvoiceService
@@ -13,15 +14,18 @@ public class InvoiceService : IInvoiceService
     private readonly IUnidadDeTrabajo _unitOfWork;
     private readonly IMapper _mapper;
     private readonly ILogger<InvoiceService> _logger;
+    private readonly ITaxCalculator _taxCalculator; 
 
     public InvoiceService(
         IUnidadDeTrabajo unitOfWork,
         IMapper mapper,
-        ILogger<InvoiceService> logger)
+        ILogger<InvoiceService> logger,
+        ITaxCalculator taxCalculator) 
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _logger = logger;
+        _taxCalculator = taxCalculator; 
     }
 
     public async Task<object> GetPagedAsync(
@@ -75,7 +79,7 @@ public class InvoiceService : IInvoiceService
             return Result<InvoiceDto>.Failure("Invoice not found");
         }
 
-        var dto = MapToInvoiceDto(invoice);
+        var dto = _mapper.Map<InvoiceDto>(invoice);
 
         _logger.LogDebug(
             "Factura encontrada. InvoiceNumber: {Number}, Customer: {Customer}",
@@ -92,7 +96,6 @@ public class InvoiceService : IInvoiceService
             dto.OrderId
         );
 
-     
         var order = await _unitOfWork.Orders.GetByIdAsync(dto.OrderId);
         if (order is null)
         {
@@ -100,7 +103,6 @@ public class InvoiceService : IInvoiceService
             return Result<InvoiceDto>.Failure("Order not found");
         }
 
-       
         if (await _unitOfWork.Invoices.ExistsForOrderAsync(dto.OrderId))
         {
             _logger.LogWarning(
@@ -110,12 +112,10 @@ public class InvoiceService : IInvoiceService
             return Result<InvoiceDto>.Failure("Invoice already exists for this order");
         }
 
-        
         var invoiceNumber = await _unitOfWork.Invoices.GenerateInvoiceNumberAsync();
 
-      
         var issueDate = dto.IssueDate ?? DateTime.UtcNow;
-        var paymentTermDays = dto.PaymentTermDays.HasValue ? dto.PaymentTermDays.Value : 30;
+        var paymentTermDays = dto.PaymentTermDays ?? 30;
         var dueDate = issueDate.AddDays(paymentTermDays);
 
         var invoice = new Invoice
@@ -134,7 +134,6 @@ public class InvoiceService : IInvoiceService
             Total = order.Total - dto.DiscountAmount
         };
 
-        
         int sortOrder = 1;
         foreach (var orderItem in order.Items)
         {
@@ -170,7 +169,7 @@ public class InvoiceService : IInvoiceService
             return Result<InvoiceDto>.Failure("Error creating invoice");
         }
 
-        return Result<InvoiceDto>.Success(MapToInvoiceDto(created));
+        return Result<InvoiceDto>.Success(_mapper.Map<InvoiceDto>(created));
     }
 
     public async Task<Result<InvoiceDto>> CreateAsync(InvoiceCreateDto dto)
@@ -180,7 +179,6 @@ public class InvoiceService : IInvoiceService
             dto.CustomerId
         );
 
-        
         var customer = await _unitOfWork.Customers.GetByIdAsync(dto.CustomerId);
         if (customer is null)
         {
@@ -188,7 +186,6 @@ public class InvoiceService : IInvoiceService
             return Result<InvoiceDto>.Failure("Customer not found");
         }
 
-       
         var productIds = dto.Items.Select(i => i.ProductId).Distinct().ToList();
         var products = await _unitOfWork.GetDbContext().Set<Product>()
             .Where(p => productIds.Contains(p.Id))
@@ -200,12 +197,10 @@ public class InvoiceService : IInvoiceService
             return Result<InvoiceDto>.Failure("One or more products not found");
         }
 
-        
         var invoiceNumber = await _unitOfWork.Invoices.GenerateInvoiceNumberAsync();
 
-        
         var issueDate = dto.IssueDate ?? DateTime.UtcNow;
-        var paymentTermDays = dto.PaymentTermDays.HasValue ? dto.PaymentTermDays.Value : 30;
+        var paymentTermDays = dto.PaymentTermDays ?? 30;
         var dueDate = issueDate.AddDays(paymentTermDays);
 
         var invoice = new Invoice
@@ -222,40 +217,22 @@ public class InvoiceService : IInvoiceService
         };
 
        
-        decimal subtotal = 0;
-        decimal taxTotal = 0;
-        int sortOrder = 1;
+        var itemCalculations = CalculateInvoiceItems(dto.Items, products);
 
-        foreach (var itemDto in dto.Items)
+       
+        if (invoice.Items == null)
         {
-            var product = products[itemDto.ProductId];
-            var unitPrice = itemDto.UnitPrice ?? product.Price;
-            var lineSubtotal = (itemDto.Quantity * unitPrice) - itemDto.DiscountAmount;
-            var lineTax = lineSubtotal * 0.12m; 
-            var lineTotal = lineSubtotal + lineTax;
-
-            subtotal += lineSubtotal;
-            taxTotal += lineTax;
-
-            var invoiceItem = new InvoiceItem
-            {
-                ProductId = itemDto.ProductId,
-                Description = itemDto.Description ?? product.Name,
-                Quantity = itemDto.Quantity,
-                UnitPrice = unitPrice,
-                DiscountAmount = itemDto.DiscountAmount,
-                Subtotal = lineSubtotal,
-                TaxAmount = lineTax,
-                LineTotal = lineTotal,
-                SortOrder = sortOrder++
-            };
-
-            invoice.Items.Add(invoiceItem);
+            invoice.Items = new List<InvoiceItem>();
         }
 
-        invoice.Subtotal = subtotal;
-        invoice.TaxAmount = taxTotal;
-        invoice.Total = (subtotal + taxTotal) - invoice.DiscountAmount;
+        foreach (var item in itemCalculations.Items)
+        {
+            invoice.Items.Add(item);
+        }
+
+        invoice.Subtotal = itemCalculations.Subtotal;
+        invoice.TaxAmount = itemCalculations.TaxAmount;
+        invoice.Total = (itemCalculations.Subtotal + itemCalculations.TaxAmount) - invoice.DiscountAmount;
 
         await _unitOfWork.Invoices.AddAsync(invoice);
         await _unitOfWork.SaveChangesAsync();
@@ -273,7 +250,7 @@ public class InvoiceService : IInvoiceService
             return Result<InvoiceDto>.Failure("Error creating invoice");
         }
 
-        return Result<InvoiceDto>.Success(MapToInvoiceDto(created));
+        return Result<InvoiceDto>.Success(_mapper.Map<InvoiceDto>(created));
     }
 
     public async Task<Result<InvoiceDto>> UpdateAsync(Guid id, InvoiceUpdateDto dto)
@@ -315,42 +292,23 @@ public class InvoiceService : IInvoiceService
             return Result<InvoiceDto>.Failure("One or more products not found");
         }
 
-        decimal subtotal = 0;
-        decimal taxTotal = 0;
-        int sortOrder = 1;
-
         invoice.Items.Clear();
 
-        foreach (var itemDto in dto.Items)
+        var itemCalculations = CalculateInvoiceItems(dto.Items, products);
+
+        if (invoice.Items == null)
         {
-            var product = products[itemDto.ProductId];
-            var unitPrice = itemDto.UnitPrice ?? product.Price;
-            var lineSubtotal = (itemDto.Quantity * unitPrice) - itemDto.DiscountAmount;
-            var lineTax = lineSubtotal * 0.12m;
-            var lineTotal = lineSubtotal + lineTax;
-
-            subtotal += lineSubtotal;
-            taxTotal += lineTax;
-
-            var invoiceItem = new InvoiceItem
-            {
-                ProductId = itemDto.ProductId,
-                Description = itemDto.Description ?? product.Name,
-                Quantity = itemDto.Quantity,
-                UnitPrice = unitPrice,
-                DiscountAmount = itemDto.DiscountAmount,
-                Subtotal = lineSubtotal,
-                TaxAmount = lineTax,
-                LineTotal = lineTotal,
-                SortOrder = sortOrder++
-            };
-
-            invoice.Items.Add(invoiceItem);
+            invoice.Items = new List<InvoiceItem>();
         }
 
-        invoice.Subtotal = subtotal;
-        invoice.TaxAmount = taxTotal;
-        invoice.Total = (subtotal + taxTotal) - invoice.DiscountAmount;
+        foreach (var item in itemCalculations.Items)
+        {
+            invoice.Items.Add(item);
+        }
+
+        invoice.Subtotal = itemCalculations.Subtotal;
+        invoice.TaxAmount = itemCalculations.TaxAmount;
+        invoice.Total = (itemCalculations.Subtotal + itemCalculations.TaxAmount) - invoice.DiscountAmount;
 
         await _unitOfWork.Invoices.UpdateAsync(invoice);
         await _unitOfWork.SaveChangesAsync();
@@ -364,9 +322,8 @@ public class InvoiceService : IInvoiceService
             return Result<InvoiceDto>.Failure("Error updating invoice");
         }
 
-        return Result<InvoiceDto>.Success(MapToInvoiceDto(updated));
+        return Result<InvoiceDto>.Success(_mapper.Map<InvoiceDto>(updated));
     }
-
 
     public async Task<Result> DeleteAsync(Guid id)
     {
@@ -431,7 +388,7 @@ public class InvoiceService : IInvoiceService
             id, invoice.InvoiceNumber
         );
 
-        return Result<InvoiceDto>.Success(MapToInvoiceDto(invoice));
+        return Result<InvoiceDto>.Success(_mapper.Map<InvoiceDto>(invoice));
     }
 
     public async Task<Result<InvoiceDto>> CancelInvoiceAsync(Guid id)
@@ -464,7 +421,7 @@ public class InvoiceService : IInvoiceService
             id, invoice.InvoiceNumber
         );
 
-        return Result<InvoiceDto>.Success(MapToInvoiceDto(invoice));
+        return Result<InvoiceDto>.Success(_mapper.Map<InvoiceDto>(invoice));
     }
 
     public async Task<Result<InvoiceDto>> AddPaymentAsync(Guid invoiceId, InvoicePaymentCreateDto dto)
@@ -530,7 +487,7 @@ public class InvoiceService : IInvoiceService
             return Result<InvoiceDto>.Failure("Error processing payment");
         }
 
-        return Result<InvoiceDto>.Success(MapToInvoiceDto(updated));
+        return Result<InvoiceDto>.Success(_mapper.Map<InvoiceDto>(updated));
     }
 
     public async Task<Result<List<InvoicePaymentDto>>> GetPaymentsAsync(Guid invoiceId)
@@ -558,7 +515,6 @@ public class InvoiceService : IInvoiceService
         return Result<List<InvoicePaymentDto>>.Success(result);
     }
 
-  
     public async Task<Result> DeletePaymentAsync(Guid invoiceId, Guid paymentId)
     {
         _logger.LogInformation(
@@ -661,54 +617,57 @@ public class InvoiceService : IInvoiceService
         return Result<InvoiceSummaryDto>.Success(summary);
     }
 
-    private InvoiceDto MapToInvoiceDto(Invoice invoice)
+  
+    private InvoiceItemCalculations CalculateInvoiceItems(
+        List<InvoiceItemCreateDto> itemDtos,
+        Dictionary<Guid, Product> products)
     {
-        return new InvoiceDto(
-            Id: invoice.Id,
-            InvoiceNumber: invoice.InvoiceNumber,
-            CustomerId: invoice.CustomerId,
-            CustomerName: invoice.Customer.Name,
-            CustomerEmail: invoice.Customer.Email,
-            OrderId: invoice.OrderId,
-            OrderReference: invoice.Order?.Id.ToString(),
-            IssueDate: invoice.IssueDate,
-            DueDate: invoice.DueDate,
-            Status: invoice.Status.ToString(),
-            Subtotal: invoice.Subtotal,
-            TaxAmount: invoice.TaxAmount,
-            DiscountAmount: invoice.DiscountAmount,
-            Total: invoice.Total,
-            PaidAmount: invoice.PaidAmount,
-            Balance: invoice.Balance,
-            PaymentTerms: invoice.PaymentTerms,
-            Notes: invoice.Notes,
-            CreatedAt: invoice.CreatedAt,
-            UpdatedAt: invoice.UpdatedAt,
-            Items: invoice.Items.Select(item => new InvoiceItemDto(
-                Id: item.Id,
-                ProductId: item.ProductId,
-                ProductName: item.Product?.Name ?? "N/A",
-                ProductSku: item.Product?.Sku ?? "N/A",
-                Description: item.Description,
-                Quantity: item.Quantity,
-                UnitPrice: item.UnitPrice,
-                DiscountAmount: item.DiscountAmount,
-                Subtotal: item.Subtotal,
-                TaxAmount: item.TaxAmount,
-                LineTotal: item.LineTotal
-            )).OrderBy(i => i.Id).ToList(),
-            Payments: invoice.Payments.Select(p => new InvoicePaymentDto(
-                Id: p.Id,
-                InvoiceId: p.InvoiceId,
-                PaymentDate: p.PaymentDate,
-                Amount: p.Amount,
-                PaymentMethod: p.PaymentMethod.ToString(),
-                Reference: p.Reference,
-                Notes: p.Notes,
-                CreatedAt: p.CreatedAt
-            )).OrderByDescending(p => p.PaymentDate).ToList(),
-            IsOverdue: invoice.IsOverdue(),
-            IsPaid: invoice.IsPaid()
-        );
+        decimal subtotal = 0;
+        decimal taxTotal = 0;
+        var items = new List<InvoiceItem>();
+        int sortOrder = 1;
+
+        foreach (var itemDto in itemDtos)
+        {
+            var product = products[itemDto.ProductId];
+            var unitPrice = itemDto.UnitPrice ?? product.Price;
+            var lineSubtotal = (itemDto.Quantity * unitPrice) - itemDto.DiscountAmount;
+
+            var lineTax = _taxCalculator.CalculateTax(lineSubtotal, TaxType.IVA);
+            var lineTotal = lineSubtotal + lineTax;
+
+            subtotal += lineSubtotal;
+            taxTotal += lineTax;
+
+            var invoiceItem = new InvoiceItem
+            {
+                ProductId = itemDto.ProductId,
+                Description = itemDto.Description ?? product.Name,
+                Quantity = itemDto.Quantity,
+                UnitPrice = unitPrice,
+                DiscountAmount = itemDto.DiscountAmount,
+                Subtotal = lineSubtotal,
+                TaxAmount = lineTax,
+                LineTotal = lineTotal,
+                SortOrder = sortOrder++
+            };
+
+            items.Add(invoiceItem);
+        }
+
+        return new InvoiceItemCalculations
+        {
+            Items = items,
+            Subtotal = subtotal,
+            TaxAmount = taxTotal
+        };
+    }
+
+
+    private class InvoiceItemCalculations
+    {
+        public List<InvoiceItem> Items { get; set; } = new();
+        public decimal Subtotal { get; set; }
+        public decimal TaxAmount { get; set; }
     }
 }

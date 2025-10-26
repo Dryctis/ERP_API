@@ -1,6 +1,7 @@
 ﻿using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using ERP_API.Common.Configuration;
 using ERP_API.DTOs;
 using ERP_API.Entities;
 using ERP_API.Repositories.Interfaces;
@@ -13,13 +14,16 @@ namespace ERP_API.Services.Implementations;
 public class AuthService : IAuthService
 {
     private readonly IUnidadDeTrabajo _unitOfWork;
-    private readonly IConfiguration _cfg;
+    private readonly JwtSettings _jwtSettings;
     private readonly ILogger<AuthService> _logger;
 
-    public AuthService(IUnidadDeTrabajo unitOfWork, IConfiguration cfg, ILogger<AuthService> logger)
+    public AuthService(
+        IUnidadDeTrabajo unitOfWork,
+        JwtSettings jwtSettings,
+        ILogger<AuthService> logger)
     {
         _unitOfWork = unitOfWork;
-        _cfg = cfg;
+        _jwtSettings = jwtSettings;
         _logger = logger;
     }
 
@@ -134,7 +138,6 @@ public class AuthService : IAuthService
         return new MeResponse(user.Id, user.Email, user.FullName, roles);
     }
 
- 
     private Task<(string access, string refresh)> IssueTokensAsync(User user, string? replacedBy = null)
     {
         var roles = user.UserRoles.Select(r => r.Role.Name).ToArray();
@@ -144,7 +147,7 @@ public class AuthService : IAuthService
         {
             UserId = user.Id,
             Token = Guid.NewGuid().ToString("N"),
-            ExpiresAt = DateTime.UtcNow.AddDays(_cfg.GetValue("Jwt:RefreshDays", 7)),
+            ExpiresAt = DateTime.UtcNow.AddDays(_jwtSettings.RefreshDays),
             ReplacedByToken = replacedBy
         };
 
@@ -159,14 +162,8 @@ public class AuthService : IAuthService
         return Task.FromResult((jwt, refresh.Token));
     }
 
-
     private string CreateJwt(User user, string[] roles)
     {
-        var issuer = _cfg["Jwt:Issuer"]!;
-        var audience = _cfg["Jwt:Audience"]!;
-        var secret = _cfg["Jwt:Secret"]!;
-        var minutes = _cfg.GetValue("Jwt:AccessMinutes", 30);
-
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
@@ -175,14 +172,14 @@ public class AuthService : IAuthService
         };
         claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Secret));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var token = new JwtSecurityToken(
-            issuer,
-            audience,
+            _jwtSettings.Issuer,
+            _jwtSettings.Audience,
             claims,
-            expires: DateTime.UtcNow.AddMinutes(minutes),
+            expires: DateTime.UtcNow.AddMinutes(_jwtSettings.AccessMinutes),
             signingCredentials: creds
         );
 
