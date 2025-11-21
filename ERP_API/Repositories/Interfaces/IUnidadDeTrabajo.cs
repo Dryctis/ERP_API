@@ -1,11 +1,9 @@
 ﻿using ERP_API.Data;
-using ERP_API.Repositories.Implementations;
 
 namespace ERP_API.Repositories.Interfaces;
 
 public interface IUnidadDeTrabajo : IDisposable
 {
-    
     IProductRepository Products { get; }
     ICustomerRepository Customers { get; }
     IOrderRepository Orders { get; }
@@ -14,8 +12,8 @@ public interface IUnidadDeTrabajo : IDisposable
     IProductSupplierRepository ProductSuppliers { get; }
     IInvoiceRepository Invoices { get; }
     IInvoicePaymentRepository InvoicePayments { get; }
-
     IPurchaseOrderRepository PurchaseOrders { get; }
+    IUserRepository Users { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 

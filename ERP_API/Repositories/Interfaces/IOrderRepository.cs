@@ -6,5 +6,12 @@ public interface IOrderRepository
 {
     Task<Order?> GetByIdAsync(Guid id);
     Task AddAsync(Order order);
-    //Task SaveAsync();
+
+    /// <summary>
+    /// Obtiene los items de órdenes en un período específico
+    /// </summary>
+    Task<IEnumerable<OrderItem>> GetOrderItemsInPeriodAsync(
+        DateTime startDate,
+        DateTime endDate,
+        CancellationToken cancellationToken = default);
 }

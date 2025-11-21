@@ -9,7 +9,6 @@ public class UnidadDeTrabajo : IUnidadDeTrabajo
     private readonly AppDbContext _context;
     private IDbContextTransaction? _transaction;
 
-   
     private IProductRepository? _products;
     private ICustomerRepository? _customers;
     private IOrderRepository? _orders;
@@ -19,13 +18,13 @@ public class UnidadDeTrabajo : IUnidadDeTrabajo
     private IInvoiceRepository? _invoices;
     private IInvoicePaymentRepository? _invoicePayments;
     private IPurchaseOrderRepository? _purchaseOrders;
+    private IUserRepository? _users;
 
     public UnidadDeTrabajo(AppDbContext context)
     {
         _context = context;
     }
 
- 
     public IProductRepository Products =>
         _products ??= new ProductRepository(_context);
 
@@ -53,6 +52,8 @@ public class UnidadDeTrabajo : IUnidadDeTrabajo
     public IPurchaseOrderRepository PurchaseOrders =>
        _purchaseOrders ??= new PurchaseOrderRepository(_context);
 
+    public IUserRepository Users =>
+        _users ??= new UserRepository(_context);
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

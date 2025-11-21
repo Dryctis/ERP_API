@@ -5,7 +5,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ERP_API.Repositories.Implementations;
 
-
 public class OrderRepository : IOrderRepository
 {
     private readonly AppDbContext _db;
@@ -25,5 +24,16 @@ public class OrderRepository : IOrderRepository
         await _db.Orders.AddAsync(order);
     }
 
-    
+    public async Task<IEnumerable<OrderItem>> GetOrderItemsInPeriodAsync(
+        DateTime startDate,
+        DateTime endDate,
+        CancellationToken cancellationToken = default)
+    {
+        return await _db.Orders
+            .AsNoTracking()
+            .Where(o => !o.IsDeleted && o.CreatedAt >= startDate && o.CreatedAt <= endDate)
+            .SelectMany(o => o.Items)
+            .Include(oi => oi.Product)
+            .ToListAsync(cancellationToken);
+    }
 }

@@ -3,7 +3,6 @@ using ERP_API.Common.Constants;
 using ERP_API.Data;
 using ERP_API.Entities;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 
 namespace ERP_API.Common.Seed;
 
@@ -22,11 +21,10 @@ public static class DatabaseSeeder
 
     private static async Task SeedRolesAsync(AppDbContext db)
     {
-        var roles = new List<Role>
+        var roles = RoleConstants.AllRoles.Select(roleName => new Role
         {
-            new() { Name = RoleConstants.Admin },
-            new() { Name = RoleConstants.User }
-        };
+            Name = roleName
+        }).ToList();
 
         await db.Roles.AddRangeAsync(roles);
     }
